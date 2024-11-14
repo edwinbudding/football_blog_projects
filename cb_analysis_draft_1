@@ -1,0 +1,252 @@
+import pandas as pd
+import glob
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+from sklearn.cluster import KMeans
+
+# === Step 1: Load, Label, and Concatenate Data ===
+file_folder = "coverage_stats_pff (2006-2023)" # edited to hide file path
+file_paths = glob.glob(os.path.join(file_folder, "*.csv"))
+
+all_data_list = []
+for file_path in file_paths:
+    df = pd.read_csv(file_path)
+    season = os.path.basename(file_path).split('_')[-1].split('.')[0]
+    df['season'] = season
+    df = df[df['position'].str.upper() == 'CB']
+    all_data_list.append(df)
+
+all_data = pd.concat(all_data_list, ignore_index=True)
+
+# Save all seasons data
+with pd.ExcelWriter("cornerback_data_2006_2023_labeled.xlsx") as writer:
+    all_data.to_excel(writer, sheet_name="All Seasons", index=False)
+
+# === Step 2: Calculate Cumulative Stats for Each Player ===
+cumulative_stats = all_data.groupby("player").agg({
+    "position": lambda x: x.mode()[0] if not x.mode().empty else "Unknown",
+    "player_game_count": "sum",
+    "coverage_snaps_per_reception": lambda x: all_data.loc[x.index, 'snap_counts_coverage'].sum() / all_data.loc[x.index, 'receptions'].sum() if all_data.loc[x.index, 'receptions'].sum() != 0 else 0,
+    "coverage_snaps_per_target": lambda x: all_data.loc[x.index, 'snap_counts_coverage'].sum() / all_data.loc[x.index, 'targets'].sum() if all_data.loc[x.index, 'targets'].sum() != 0 else 0,
+    "declined_penalties": "sum",
+    "dropped_ints": "sum",
+    "forced_incompletes": "sum",
+    "interceptions": "sum",
+    "pass_break_ups": "sum",
+    "penalties": "sum",
+    "receptions": "sum",
+    "snap_counts_coverage": "sum",
+    "snap_counts_pass_play": "sum",
+    "touchdowns": "sum",
+    "yards": "sum",
+    "yards_after_catch": "sum",
+    "yards_per_coverage_snap": lambda x: all_data.loc[x.index, 'yards'].sum() / all_data.loc[x.index, 'snap_counts_coverage'].sum() if all_data.loc[x.index, 'snap_counts_coverage'].sum() != 0 else 0
+}).reset_index()
+
+# Save cumulative stats
+with pd.ExcelWriter("cornerback_data_2006_2023_labeled.xlsx", mode="a", if_sheet_exists='replace') as writer:
+    cumulative_stats.to_excel(writer, sheet_name="Cumulative Stats", index=False)
+
+# Calculate Additional Metrics
+cumulative_stats['ball_hawk_metric'] = (
+    (cumulative_stats['interceptions'] + cumulative_stats['pass_break_ups']) 
+    / cumulative_stats['snap_counts_coverage']
+) * 35
+cumulative_stats['yards_per_35_coverage_snaps'] = (
+    cumulative_stats['yards'] / cumulative_stats['snap_counts_coverage'] * 35
+)
+
+# === Filter for Cornerbacks with at Least 3000 Snaps for Career Stats ===
+filtered_career_stats = cumulative_stats[cumulative_stats['snap_counts_coverage'] >= 3000]
+
+# Filter single-season data for cornerbacks with at least 350 snaps
+filtered_single_season_stats = all_data[
+    (all_data['snap_counts_coverage'] >= 350) & 
+    (all_data['position'].str.upper() == 'CB')
+]
+
+# Function to create bar charts with value labels
+def create_bar_chart(data, x_col, y_col, title, xlabel, color, sort_ascending=True):
+    plt.figure(figsize=(10, 6))
+    sorted_data = data.sort_values(by=x_col, ascending=sort_ascending).head(10)
+    plt.barh(sorted_data[y_col], sorted_data[x_col], color=color)
+    plt.xlabel(xlabel)
+    plt.title(title)
+    plt.gca().invert_yaxis()  # Invert y-axis to show highest values at the top
+    plt.tight_layout(pad=2)  # Add padding to ensure labels fit within the boundary
+    
+    # Add value labels to each bar
+    for index, value in enumerate(sorted_data[x_col]):
+        plt.text(value, index, f'{value:.2f}', va='center')
+    plt.show()
+
+# === Graphs for Top Performances ===
+# 1. Top 10 Highest Career Marks for Yards Allowed per 35 Coverage Snaps
+create_bar_chart(
+    filtered_career_stats,
+    x_col='yards_per_35_coverage_snaps',
+    y_col='player',
+    title='Top 10 Career Marks for Yards Allowed per 35 Coverage Snaps (3000+ Snaps)',
+    xlabel='Yards Allowed per 35 Coverage Snaps',
+    color='skyblue',
+    sort_ascending=True
+)
+
+# 2. Top 10 Highest Single-Season Marks for Yards Allowed per 35 Coverage Snaps
+filtered_single_season_stats['yards_per_35_coverage_snaps'] = (
+    filtered_single_season_stats['yards'] / filtered_single_season_stats['snap_counts_coverage'] * 35
+)
+filtered_single_season_stats['player_season'] = filtered_single_season_stats['player'] + ' (' + filtered_single_season_stats['season'] + ')'
+create_bar_chart(
+    filtered_single_season_stats,
+    x_col='yards_per_35_coverage_snaps',
+    y_col='player_season',
+    title='Top 10 Single-Season Marks for Yards Allowed per 35 Coverage Snaps (350+ Snaps)',
+    xlabel='Yards Allowed per 35 Coverage Snaps',
+    color='lightgreen',
+    sort_ascending=True
+)
+
+# 3. Top 10 Highest Career Marks for Ball Hawk Plays per 35 Coverage Snaps
+filtered_career_stats['ball_hawk_plays_per_35_snaps'] = (
+    (filtered_career_stats['interceptions'] + filtered_career_stats['pass_break_ups']) / filtered_career_stats['snap_counts_coverage']
+) * 35
+create_bar_chart(
+    filtered_career_stats,
+    x_col='ball_hawk_plays_per_35_snaps',
+    y_col='player',
+    title='Top 10 Career Marks for Ball Hawk Plays per 35 Coverage Snaps (3000+ Snaps)',
+    xlabel='Ball Hawk Plays per 35 Coverage Snaps',
+    color='orange',
+    sort_ascending=False
+)
+
+# 4. Top 10 Highest Single-Season Marks for Ball Hawk Plays per 35 Coverage Snaps
+filtered_single_season_stats['ball_hawk_plays'] = filtered_single_season_stats['interceptions'] + filtered_single_season_stats['pass_break_ups']
+filtered_single_season_stats['ball_hawk_plays_per_35_snaps'] = (
+    filtered_single_season_stats['ball_hawk_plays'] / filtered_single_season_stats['snap_counts_coverage']
+) * 35
+create_bar_chart(
+    filtered_single_season_stats,
+    x_col='ball_hawk_plays_per_35_snaps',
+    y_col='player_season',
+    title='Top 10 Single-Season Marks for Ball Hawk Plays per 35 Coverage Snaps (350+ Snaps)',
+    xlabel='Ball Hawk Plays per 35 Coverage Snaps',
+    color='purple',
+    sort_ascending=False
+)
+
+# === Machine Learning/Clustering Segment ===
+# Filter for Cornerbacks with At Least 3000 Snaps
+filtered_stats = cumulative_stats[
+    (cumulative_stats["snap_counts_coverage"] >= 3000) &
+    (cumulative_stats["position"].str.upper() == "CB")
+]
+
+# Prepare Data for KMeans Clustering
+X = filtered_stats[['yards_per_35_coverage_snaps', 'ball_hawk_metric']].values
+
+# Determine Optimal Number of Clusters using Elbow Method
+inertia = []
+for n in range(1, 11):
+    kmeans = KMeans(n_clusters=n, random_state=42).fit(X)
+    inertia.append(kmeans.inertia_)
+
+plt.figure(figsize=(8, 5))
+plt.plot(range(1, 11), inertia, marker='o')
+plt.xlabel('Number of Clusters')
+plt.ylabel('Inertia')
+plt.title('Elbow Method for Optimal Clusters')
+plt.show()
+
+# Perform KMeans Clustering with Chosen Number of Clusters
+kmeans = KMeans(n_clusters=4, random_state=42)
+clusters = kmeans.fit_predict(X)
+
+# Relabel clusters in left-to-right order
+centroids = kmeans.cluster_centers_
+centroids_sorted_indices = np.argsort(centroids[:, 0])
+new_labels = {old_label: new_label + 1 for new_label, old_label in enumerate(centroids_sorted_indices)}
+filtered_stats['cluster'] = [new_labels[label] for label in clusters]
+
+# Plot KMeans Clustering
+plt.figure(figsize=(12, 8))
+for label in filtered_stats['cluster'].unique():
+    cluster_data = filtered_stats[filtered_stats['cluster'] == label]
+    plt.scatter(cluster_data['yards_per_35_coverage_snaps'], cluster_data['ball_hawk_metric'], label=f"Cluster {label}", alpha=0.7)
+for i, row in filtered_stats.iterrows():
+    plt.annotate(row['player'], (row['yards_per_35_coverage_snaps'], row['ball_hawk_metric']), textcoords="offset points", xytext=(5, -5), ha='center', fontsize=8)
+plt.xlabel('Yards Allowed per 35 Coverage Snaps')
+plt.ylabel('Ball Hawk Plays per 35 Coverage Snaps')
+plt.title('K-Means Clustering of Cornerbacks (2006-2023)')
+plt.legend(title="Clusters")
+plt.show()
+
+# === Correlation Analysis with PFF Coverage Grades ===
+# Ensure 'grades_coverage_defense' column exists in filtered career and single-season data
+
+# For Career Stats
+if 'grades_coverage_defense' in filtered_career_stats.columns:
+    # Calculate weighted average of grades_coverage_defense based on snap counts
+    filtered_career_stats['grades_coverage_defense_per_coverage_snap'] = (
+        filtered_career_stats['grades_coverage_defense'] / filtered_career_stats['snap_counts_coverage']
+    )
+    correlation_career_yards = filtered_career_stats['yards_per_35_coverage_snaps'].corr(
+        filtered_career_stats['grades_coverage_defense_per_coverage_snap']
+    )
+    correlation_career_ball_hawk = filtered_career_stats['ball_hawk_plays_per_35_snaps'].corr(
+        filtered_career_stats['grades_coverage_defense_per_coverage_snap']
+    )
+
+    print("Career Correlation between Yards Allowed per 35 Coverage Snaps and PFF Grades (per snap):", correlation_career_yards)
+    print("Career Correlation between Ball Hawk Plays per 35 Coverage Snaps and PFF Grades (per snap):", correlation_career_ball_hawk)
+
+# For Single-Season Stats
+if 'grades_coverage_defense' in filtered_single_season_stats.columns:
+    # Calculate weighted average of grades_coverage_defense based on snap counts
+    filtered_single_season_stats['grades_coverage_defense_per_coverage_snap'] = (
+        filtered_single_season_stats['grades_coverage_defense'] / filtered_single_season_stats['snap_counts_coverage']
+    )
+    correlation_season_yards = filtered_single_season_stats['yards_per_35_coverage_snaps'].corr(
+        filtered_single_season_stats['grades_coverage_defense_per_coverage_snap']
+    )
+    correlation_season_ball_hawk = filtered_single_season_stats['ball_hawk_plays_per_35_snaps'].corr(
+        filtered_single_season_stats['grades_coverage_defense_per_coverage_snap']
+    )
+
+    print("Single-Season Correlation between Yards Allowed per 35 Coverage Snaps and PFF Grades (per snap):", correlation_season_yards)
+    print("Single-Season Correlation between Ball Hawk Plays per 35 Coverage Snaps and PFF Grades (per snap):", correlation_season_ball_hawk)
+
+# Correlation values and metrics
+correlations = [-0.23790579273972867, 0.17423460887932557]
+metrics = ['Yards Allowed per 35 Coverage Snaps', 'Ball Hawk Plays per 35 Coverage Snaps']
+
+# Colors for the bars
+colors = ['steelblue', 'darkorange']
+
+# Create a bar chart
+plt.figure(figsize=(10, 5))
+bars = plt.barh(metrics, correlations, color=colors, edgecolor='black', alpha=0.8)
+
+# Add labels to the bars
+for bar in bars:
+    width = bar.get_width()
+    plt.text(
+        width / 2 if width > 0 else width / 2,  # Center text within the bar
+        bar.get_y() + bar.get_height() / 2,
+        f'{width:.3f}',
+        va='center', ha='center', color='white' if abs(width) > 0.1 else 'black'  # Adjust color for visibility
+    )
+
+# Adjust plot margins to ensure text isn't cut off
+plt.subplots_adjust(left=0.3)  # Increase left margin
+
+# Add gridlines, labels, and title
+plt.axvline(0, color='black', linewidth=0.8)  # Add a vertical line at x=0 for reference
+plt.xlabel('Correlation with PFF Grades (Per Snap)')
+plt.title('Correlation of Cornerback Metrics with PFF Coverage Grades (Per Snap)')
+plt.grid(axis='x', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.show()
