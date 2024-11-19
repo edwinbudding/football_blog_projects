@@ -1,0 +1,107 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+import seaborn as sns
+
+# Load data from CSV file
+file_path = os.path.expanduser("/Users/anokhpalakurthi/Downloads/final_rookie_chart.csv")
+df = pd.read_csv(file_path)
+
+# Define relevant columns for different analyses
+physical_columns = ['Height (inches)', 'Weight (lbs)']
+performance_columns = ['PFF Offense Grade', 'Passing Yards / Game', 'Rushing Yards / Game', 'BTT per DB', 'TWP per DB']
+
+# Standardize all data (excluding 'Season' and 'Player')
+scaler = StandardScaler()
+standardized_data = pd.DataFrame(scaler.fit_transform(df.drop(columns=['Season', 'Player'])),
+                                 columns=df.columns.drop(['Season', 'Player']))
+
+# Find the index for Drake Maye
+drake_maye_index = df[df['Player'] == 'Drake Maye'].index[0]
+
+# Function to find closest neighbors using NearestNeighbors
+def find_closest_neighbors(data, index, n_neighbors=6):
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors).fit(data)
+    distances, indices = nbrs.kneighbors([data.loc[index]])
+    return indices[0][1:], distances[0][1:]
+
+# Function to plot PCA results with unique colors for each closest neighbor
+def plot_pca_results_with_unique_colors(pca_result, title, highlight_indices, highlight_names, drake_color='red', all_color='blue'):
+    plt.figure(figsize=(10, 6))
+    all_other = True  # To ensure only one "All Others" label in legend
+    neighbor_colors = sns.color_palette("husl", len(highlight_indices))  # Distinct colors for each neighbor
+
+    for i in range(len(df)):
+        if i == drake_maye_index:
+            plt.scatter(pca_result[i, 0], pca_result[i, 1], color=drake_color, s=120, label='Drake Maye')
+        elif i in highlight_indices:
+            neighbor_index = list(highlight_indices).index(i)
+            plt.scatter(pca_result[i, 0], pca_result[i, 1], color=neighbor_colors[neighbor_index], s=70, label=highlight_names[neighbor_index])
+        else:
+            if all_other:
+                plt.scatter(pca_result[i, 0], pca_result[i, 1], color=all_color, alpha=0.4, s=20, label="All Others")
+                all_other = False
+            else:
+                plt.scatter(pca_result[i, 0], pca_result[i, 1], color=all_color, alpha=0.4, s=20)
+
+    plt.title(title)
+    plt.xlabel('Principal Component 1')
+    plt.ylabel('Principal Component 2')
+    plt.legend()
+    plt.show()
+
+# Full PCA with all features (weighted)
+combined_columns = ['Height (inches)', 'Weight (lbs)', 'PFF Offense Grade', 'Passing Yards / Game', 'Rushing Yards / Game', 'BTT per DB', 'TWP per DB']
+df_weighted = df.copy()
+df_weighted['Height (inches)'] *= 0.5
+df_weighted['Weight (lbs)'] *= 0.5
+df_weighted['PFF Offense Grade'] *= 1.5
+df_weighted['Passing Yards / Game'] *= 1.5
+df_weighted['Rushing Yards / Game'] *= 1.5
+df_weighted['BTT per DB'] *= 1.5
+df_weighted['TWP per DB'] *= 1.5
+
+standardized_combined = pd.DataFrame(scaler.fit_transform(df_weighted[combined_columns]), columns=combined_columns)
+pca_full = PCA(n_components=2)
+pca_full_result = pca_full.fit_transform(standardized_combined)
+full_indices, _ = find_closest_neighbors(pd.DataFrame(pca_full_result), drake_maye_index)
+full_names = df.iloc[full_indices]['Player'].values
+plot_pca_results_with_unique_colors(pca_full_result, 'PCA with All Features (Weighted)', highlight_indices=full_indices, highlight_names=full_names)
+
+# PCA with only physical traits
+standardized_physical = pd.DataFrame(scaler.fit_transform(df[physical_columns]), columns=physical_columns)
+pca_physical = PCA(n_components=2)
+pca_physical_result = pca_physical.fit_transform(standardized_physical)
+physical_indices, _ = find_closest_neighbors(pd.DataFrame(pca_physical_result), drake_maye_index)
+physical_names = df.iloc[physical_indices]['Player'].values
+plot_pca_results_with_unique_colors(pca_physical_result, 'PCA with Physical Traits', highlight_indices=physical_indices, highlight_names=physical_names)
+
+# PCA with only performance metrics
+standardized_performance = pd.DataFrame(scaler.fit_transform(df[performance_columns]), columns=performance_columns)
+pca_performance = PCA(n_components=2)
+pca_performance_result = pca_performance.fit_transform(standardized_performance)
+performance_indices, _ = find_closest_neighbors(pd.DataFrame(pca_performance_result), drake_maye_index)
+performance_names = df.iloc[performance_indices]['Player'].values
+plot_pca_results_with_unique_colors(pca_performance_result, 'PCA with Performance Metrics', highlight_indices=performance_indices, highlight_names=performance_names)
+
+# Add similarity scores to DataFrame
+df['similarity_all'] = np.linalg.norm(pca_full_result - pca_full_result[drake_maye_index], axis=1)
+df['similarity_physical'] = np.linalg.norm(pca_physical_result - pca_physical_result[drake_maye_index], axis=1)
+df['similarity_performance'] = np.linalg.norm(pca_performance_result - pca_performance_result[drake_maye_index], axis=1)
+
+# Sorting based on similarities
+df_sorted_all = df.sort_values(by='similarity_all')
+df_sorted_physical = df.sort_values(by='similarity_physical')
+df_sorted_performance = df.sort_values(by='similarity_performance')
+
+# Print sorted results for similarity scores
+print("Top Players by Overall Similarity (Weighted):")
+print(df_sorted_all[['Player', 'similarity_all']].head(10))
+print("\nTop Players by Physical Similarity (Unweighted):")
+print(df_sorted_physical[['Player', 'similarity_physical']].head(10))
+print("\nTop Players by Performance Similarity (Unweighted):")
+print(df_sorted_performance[['Player', 'similarity_performance']].head(10))
