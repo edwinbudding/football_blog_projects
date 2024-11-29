@@ -1,0 +1,84 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
+import matplotlib.pyplot as plt
+from scipy.spatial.distance import cdist
+
+# Load your dataset
+df = pd.read_csv("/Users/anokhpalakurthi/Downloads/List of Rookie 1st Round Cornerbacks - Rookie Seasons.csv")
+
+physical_attributes = ["Height", "Weight", "Arm", "Hand", "40 Time"]
+performance_metrics = [
+    "Opposing Passer Rating", "Coverage Snaps / Target", "Coverage Snaps / Reception",
+    "INTs / 35CS", "PBUs / 35CS", "TDs allowed / 35CS", "YA / 35CS"
+]
+
+scaler_physical = StandardScaler()
+scaler_performance = StandardScaler()
+
+scaled_physical = scaler_physical.fit_transform(df[physical_attributes].dropna())
+scaled_performance = scaler_performance.fit_transform(df[performance_metrics].dropna())
+
+pca_physical = PCA(n_components=1)  # We only need 1 PC in physical attributes
+pca_performance = PCA(n_components=1)  # We only need 1 PC in performance metrics
+
+physical_pc = pca_physical.fit_transform(scaled_physical)[:, 0]  # Extract PC1 in physical
+performance_pc = pca_performance.fit_transform(scaled_performance)[:, 0]  # Extract PC1 in performance
+
+combined_pc_data = np.vstack((performance_pc, physical_pc)).T
+
+kmeans = KMeans(n_clusters=5, random_state=42)
+cluster_labels = kmeans.fit_predict(combined_pc_data)
+
+df["Performance_PC"] = performance_pc
+df["Physical_PC"] = physical_pc
+df["Cluster"] = cluster_labels
+
+plt.figure(figsize=(10, 7))
+unique_labels = np.unique(cluster_labels)
+
+for label in unique_labels:
+    cluster_points = combined_pc_data[cluster_labels == label]
+    plt.scatter(cluster_points[:, 0], cluster_points[:, 1], label=f"Cluster {label}", alpha=0.7)
+
+gonzalez_index = df[df["Cornerback"] == "Christian Gonzalez"].index[0]
+gonzalez_point = combined_pc_data[gonzalez_index]
+plt.scatter(
+    gonzalez_point[0], gonzalez_point[1],
+    color='red', edgecolor='black', s=150, marker='*', label="Christian Gonzalez"
+)
+plt.text(
+    gonzalez_point[0] + 0.1, gonzalez_point[1] + 0.1, "Christian Gonzalez",
+    fontsize=10, color='red', weight='bold'
+)
+
+distances = cdist([gonzalez_point], combined_pc_data, metric='euclidean')[0]
+closest_indices = np.argsort(distances)[1:6]  # Skip Gonzalez's own point
+
+for idx in closest_indices:
+    cornerback_name = df.iloc[idx]["Cornerback"]
+    x, y = combined_pc_data[idx]
+    plt.text(x + 0.1, y + 0.1, cornerback_name, fontsize=9, color='black')
+
+plt.title("K-Means Clustering of Cornerbacks (Physical vs. Performance Metrics)")
+plt.xlabel("Performance PC (Coverage and Playmaking)")
+plt.ylabel("Physical PC (Size and Speed)")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("KMeans_Separate_PCA_Chart.png")
+plt.show()
+
+print("Explained Variance Ratios (Performance):", pca_performance.explained_variance_ratio_)
+print("Explained Variance Ratios (Physical):", pca_physical.explained_variance_ratio_)
+
+knn = NearestNeighbors(n_neighbors=6, metric='euclidean')  # Include Gonzalez himself
+knn.fit(combined_pc_data)
+distances, indices = knn.kneighbors([gonzalez_point])
+
+print("\nClosest Cornerbacks to Christian Gonzalez:")
+for i, idx in enumerate(indices[0][1:]):  # Skip Gonzalez himself
+    print(f"{i+1}. {df.iloc[idx]['Cornerback']} (Distance: {distances[0][i+1]:.2f})")
